@@ -1,6 +1,7 @@
 # SkipNotify
 
-
+The is a Skip framework that provides support for notifications
+on iOS and Android.
 
 ## Setup
 

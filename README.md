@@ -1,6 +1,7 @@
 # SkipNotify
 
-
+The is a Skip framework that provides support for notifications
+on iOS and Android.
 
 ## Setup
 
@@ -23,6 +24,24 @@ let package = Package(
     ]
 )
 ```
+
+## Configuration
+
+Enabling push notifications in your app requires a series of steps that differ
+between iOS and Android. Following is an outline of the tasks required to
+activate and configure push notifications.
+
+### iOS
+
+Follow the steps described in the 
+[Registering your app with APNs](https://developer.apple.com/documentation/usernotifications/registering-your-app-with-apns)
+documentation:
+
+- Select your app from the App Store Connect [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/identifiers/) page and select "Capabilites" and turn on Push Notifications then click "Save"
+- Use the [Push Notifications Console](https://developer.apple.com/notifications/push-notifications-console/) to send a test message to your app.
+
+### Android
+
 
 ## License
 

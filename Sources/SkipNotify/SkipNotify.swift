@@ -1,10 +1,11 @@
 // Copyright 2023–2025 Skip
 // SPDX-License-Identifier: LGPL-3.0-only WITH LGPL-3.0-linking-exception
 #if !SKIP_BRIDGE
-#if canImport(UIKit) // UNUserNotificationCenter does not exist on macOS
 import Foundation
 #if !SKIP
+#if canImport(UIKit) // UNUserNotificationCenter does not exist on macOS
 import UIKit
+#endif
 import OSLog
 #else
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +29,9 @@ public class SkipNotify {
     public func fetchNotificationToken() async throws -> String {
         #if SKIP
         FirebaseMessaging.getInstance().token.await()
+        #else
+        #if !canImport(UIKit) // UNUserNotificationCenter does not exist on macOS
+        throw SkipNotifyError(message: "UIKit required for notifications on Darwin platforms")
         #else
         UNUserNotificationCenter.current().delegate = notificationCenterDelegate
 
@@ -75,9 +79,11 @@ public class SkipNotify {
             }
         }
         #endif
+        #endif
     }
 
     #if !SKIP
+    #if canImport(UIKit)
     let notificationCenterDelegate = NotificationCenterDelegate()
 
     class NotificationCenterDelegate: NSObject, UNUserNotificationCenterDelegate {
@@ -100,7 +106,24 @@ public class SkipNotify {
 
     }
     #endif
+    #endif
 }
 
-#endif
+/// Thrown on notify error.
+public struct SkipNotifyError: LocalizedError, CustomStringConvertible {
+    let message: String
+
+    init(message: String) {
+        self.message = message
+    }
+
+    public var description: String {
+        return message
+    }
+
+    public var errorDescription: String? {
+        return message
+    }
+}
+
 #endif

@@ -1,7 +1,10 @@
 # SkipNotify
 
-The is a Skip framework that provides support for notifications
-on iOS and Android.
+> [!CAUTION]
+> As of Mar 2026, if you just want standard push notifications in your Android app, we recommend using our standard [skip-firebase](https://github.com/skiptools/skip-firebase) library. `skip-notify` is experimental, and currently just wraps Google Firebase.
+
+The is a Skip framework to support notifications
+on iOS and Android with little/no dependency on Google libraries.
 
 ## Setup
 

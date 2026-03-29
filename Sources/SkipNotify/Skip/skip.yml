@@ -4,21 +4,23 @@ skip:
   mode: 'transpiled'
   bridging: true
 
-# Kotlin dependencies and Gradle build options for this module can be configured here
-settings:
-  contents:
-    - block: 'dependencyResolutionManagement'
-      contents:
-        - block: 'versionCatalogs'
-          contents:
-            - block: 'create("libs")'
-              contents:
-                - 'version("firebase", "34.7.0")'
-                - 'library("firebase-bom", "com.google.firebase", "firebase-bom").versionRef("firebase")'
+# No external dependencies required.
+# FCM token retrieval uses the GMS C2DM registration intent directly,
 
-build:
-  contents:
-    - block: 'dependencies'
-      contents:
-        - 'implementation(platform(libs.firebase.bom))'
-        - 'implementation("com.google.firebase:firebase-messaging")'
+#settings:
+#  contents:
+#    - block: 'dependencyResolutionManagement'
+#      contents:
+#        - block: 'versionCatalogs'
+#          contents:
+#            - block: 'create("libs")'
+#              contents:
+#                - 'version("firebase", "34.7.0")'
+#                - 'library("firebase-bom", "com.google.firebase", "firebase-bom").versionRef("firebase")'
+#
+#build:
+#  contents:
+#    - block: 'dependencies'
+#      contents:
+#        - 'implementation(platform(libs.firebase.bom))'
+#        - 'implementation("com.google.firebase:firebase-messaging")'

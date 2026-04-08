@@ -95,9 +95,7 @@ the forwarding calls documented in the source.
 
 SkipNotify communicates directly with Google Mobile Services using
 the **C2DM registration intent protocol** — the same underlying
-mechanism that the `firebase-messaging` SDK uses internally. This
-protocol predates the closed-source library abstraction and remains
-stable because millions of devices depend on it.
+mechanism that the `firebase-messaging` SDK uses internally.
 
 The registration flow:
 
@@ -142,6 +140,11 @@ Content-Type: application/json
 For iOS, use the
 [APNs HTTP/2 API](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns)
 with the hex device token returned by `fetchNotificationToken`.
+
+> [!TIP]
+> For cross-platform notification sending, you may want to
+> utilize a tool like [gorush](https://github.com/appleboy/gorush)
+> to simplify the configuration and authentication.
 
 ## Configuration
 

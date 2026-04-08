@@ -8,14 +8,12 @@ import UIKit
 #endif
 import OSLog
 #else
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.Message
-import android.os.Messenger
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -26,12 +24,12 @@ private let logger: Logger = Logger(subsystem: "skip.notify", category: "SkipNot
 /// Cross-platform push notification support.
 ///
 /// On iOS, uses the native `UserNotifications` framework and APNs.
-/// On Android, interfaces directly with Google Mobile Services (GMS)
-/// via the C2DM registration intent, without requiring the
-/// `com.google.firebase:firebase-messaging` library.
+/// On Android, communicates directly with Google Mobile Services (GMS) via
+/// the C2DM registration intent protocol to obtain FCM tokens, without
+/// requiring any proprietary Firebase or Google Play Services libraries.
 ///
 /// ```swift
-/// let token = try await SkipNotify.shared.fetchNotificationToken()
+/// let token = try await SkipNotify.shared.fetchNotificationToken(firebaseProjectNumber: "123456789")
 /// ```
 public class SkipNotify {
     public static let shared = SkipNotify()
@@ -43,8 +41,8 @@ public class SkipNotify {
 
     /// Returns `true` if Google Mobile Services (GMS) is available on the device.
     ///
-    /// On iOS, always returns `false`. On Android, checks whether the device
-    /// has a service that can handle the C2DM registration intent.
+    /// On iOS, always returns `false`. On Android, checks whether the GMS
+    /// package is installed and enabled.
     public var isGMSAvailable: Bool {
         #if SKIP
         return Self.checkGMSAvailable()
@@ -54,9 +52,6 @@ public class SkipNotify {
     }
 
     /// Returns a human-readable description of the GMS availability status.
-    ///
-    /// On iOS, returns `"GMS not applicable (iOS)"`.
-    /// On Android, returns either `"GMS available"` or `"GMS not available"`.
     public var gmsStatusDescription: String {
         #if SKIP
         return isGMSAvailable ? "GMS available" : "GMS not available"
@@ -70,19 +65,24 @@ public class SkipNotify {
     /// Fetches the device's push notification token.
     ///
     /// On iOS, registers with APNs and returns the device token as a hex string.
-    /// On Android, requests an FCM registration token directly from GMS
-    /// using the C2DM registration intent.
+    /// On Android, requests an FCM registration token from GMS using the
+    /// C2DM registration intent protocol.
     ///
-    /// - Parameter senderID: The GCM/FCM sender ID (project number) for the
-    ///   Firebase project. Required on Android; ignored on iOS.
+    /// - Parameter firebaseProjectNumber: The numeric sender ID (project number)
+    ///   from the Firebase console's Cloud Messaging settings. Required on Android
+    ///   to identify which Firebase project should receive messages for this app.
+    ///   Ignored on iOS (APNs uses the app's bundle ID and entitlements instead).
     /// - Returns: The push notification token string.
     /// - Throws: `SkipNotifyError` if token retrieval fails or GMS is unavailable.
-    public func fetchNotificationToken(senderID: String = "") async throws -> String {
+    public func fetchNotificationToken(firebaseProjectNumber: String?) async throws -> String {
         #if SKIP
         guard Self.checkGMSAvailable() else {
             throw SkipNotifyError(message: "Google Mobile Services (GMS) is not available on this device")
         }
-        return try await Self.requestToken(senderID: senderID)
+        guard let firebaseProjectNumber else {
+            throw SkipNotifyError(message: "Firebase Sender ID unspecified")
+        }
+        return try await Self.requestToken(senderID: firebaseProjectNumber)
         #else
         #if !canImport(UIKit) // UNUserNotificationCenter does not exist on macOS
         throw SkipNotifyError(message: "UIKit required for notifications on Darwin platforms")
@@ -160,80 +160,120 @@ public class SkipNotify {
     #endif
     #endif
 
-    // MARK: - Android GMS Implementation
+    // MARK: - Android GMS C2DM Implementation
 
     #if SKIP
-    /// The C2DM registration intent action.
-    private static let ACTION_C2DM_REGISTER = "com.google.android.c2dm.intent.REGISTER"
-
-    /// Checks whether the device has a GMS service that can handle C2DM registration.
+    /// Checks whether GMS is installed and enabled on the device.
     private static func checkGMSAvailable() -> Bool {
         guard let context = ProcessInfo.processInfo.androidContext else {
             return false
         }
-        let intent = Intent(ACTION_C2DM_REGISTER)
-        intent.setPackage("com.google.android.gms")
-        let resolveInfo = context.packageManager.resolveService(intent, PackageManager.GET_RESOLVED_FILTER)
-        return resolveInfo != nil
+        do {
+            let info = context.packageManager.getPackageInfo("com.google.android.gms", 0)
+            return info.applicationInfo?.enabled == true
+        } catch {
+            return false
+        }
     }
 
-    /// Requests a registration token from GMS using the C2DM registration intent.
+    /// Returns the installed GMS version code, or 0 if unavailable.
+    private static func gmsVersionCode() -> Int {
+        guard let context = ProcessInfo.processInfo.androidContext else { return 0 }
+        do {
+            let info = context.packageManager.getPackageInfo("com.google.android.gms", 0)
+            return info.longVersionCode.toInt()
+        } catch {
+            return 0
+        }
+    }
+
+    /// Requests an FCM registration token from GMS using the C2DM registration
+    /// intent protocol. This communicates directly with GMS without any
+    /// proprietary Firebase/Google libraries.
     ///
-    /// This sends an intent to `com.google.android.gms` with a `Messenger` callback.
-    /// GMS responds asynchronously with a `Message` containing the registration token
-    /// in `msg.data.getString("registration_id")`.
+    /// The protocol sends a `com.google.android.c2dm.intent.REGISTER` intent
+    /// to GMS and receives the token back via a BroadcastReceiver listening
+    /// for `com.google.android.c2dm.intent.REGISTRATION`.
     private static func requestToken(senderID: String) async throws -> String {
-        guard let context = ProcessInfo.processInfo.androidContext else {
-            throw SkipNotifyError(message: "Android context not available")
+        /* SKIP REPLACE:
+        val context = ProcessInfo.processInfo.androidContext
+            ?: throw SkipNotifyError(message = "Android context not available")
+
+        if (senderID.isEmpty()) {
+            logger.warning("No senderID provided — GMS requires a valid FCM sender ID (numeric project number)")
         }
 
-        return try await suspendCancellableCoroutine { continuation in
-            let handler = RegistrationHandler(continuation: continuation)
-            let messenger = Messenger(handler)
+        suspendCancellableCoroutine { continuation ->
+            var resumed = false
 
-            let intent = Intent(ACTION_C2DM_REGISTER)
-            intent.setPackage("com.google.android.gms")
-            intent.putExtra("app", android.app.PendingIntent.getBroadcast(context, 0, Intent(), android.app.PendingIntent.FLAG_IMMUTABLE))
-            intent.putExtra("google.messenger", messenger)
-            if !senderID.isEmpty {
-                intent.putExtra("sender", senderID)
+            // BroadcastReceiver to receive the C2DM registration result from GMS.
+            // GMS sends the token (or error) back via the REGISTRATION broadcast.
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context, intent: Intent) {
+                    if (resumed) return
+                    try { ctx.unregisterReceiver(this) } catch (_: Exception) {}
+
+                    val error = intent.getStringExtra("error")
+                    if (error != null) {
+                        logger.error("GMS registration error: ${error}")
+                        resumed = true
+                        continuation.resumeWithException(SkipNotifyError(message = "GMS registration failed: ${error}") as Throwable)
+                        return
+                    }
+
+                    val token = intent.getStringExtra("registration_id")
+                    if (token != null && token.isNotEmpty()) {
+                        logger.info("Received FCM registration token (${token.length} chars)")
+                        resumed = true
+                        continuation.resume(token)
+                    } else {
+                        logger.error("GMS registration returned empty response (no token, no error)")
+                        resumed = true
+                        continuation.resumeWithException(SkipNotifyError(message = "GMS registration returned empty response") as Throwable)
+                    }
+                }
             }
 
-            do {
-                context.startService(intent)
-                logger.info("C2DM registration intent sent to GMS")
-            } catch {
-                logger.error("Failed to send C2DM registration intent: \(error)")
-                continuation.resumeWithException(SkipNotifyError(message: "Failed to send registration intent: \(error)") as Throwable)
+            // Listen for the REGISTRATION result broadcast from GMS.
+            val intentFilter = IntentFilter("com.google.android.c2dm.intent.REGISTRATION")
+            intentFilter.addCategory(context.packageName)
+            context.registerReceiver(receiver, intentFilter, android.content.Context.RECEIVER_EXPORTED)
+
+            // PendingIntent that GMS uses to verify our app's identity.
+            // GMS extracts the package name from the PendingIntent creator.
+            val appPendingIntent = PendingIntent.getBroadcast(
+                context, 0, Intent(), PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val gmsVersion = gmsVersionCode()
+
+            // Build and send the C2DM registration intent to GMS.
+            val registrationIntent = Intent("com.google.android.c2dm.intent.REGISTER")
+            registrationIntent.setPackage("com.google.android.gms")
+            registrationIntent.putExtra("app", appPendingIntent)
+            registrationIntent.putExtra("sender", senderID)
+            registrationIntent.putExtra("subtype", senderID)
+            registrationIntent.putExtra("gmsVersion", gmsVersion.toString())
+            registrationIntent.putExtra("scope", "GCM")
+
+            continuation.invokeOnCancellation {
+                if (!resumed) {
+                    try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
+                }
+            }
+
+            try {
+                context.startService(registrationIntent)
+                logger.info("C2DM registration intent sent to GMS (sender=${senderID}, gmsVersion=${gmsVersion})")
+            } catch (e: Exception) {
+                logger.error("Failed to send C2DM registration intent: ${e}")
+                try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
+                resumed = true
+                continuation.resumeWithException(SkipNotifyError(message = "Failed to send registration intent: ${e}") as Throwable)
             }
         }
-    }
-
-    /// Handler that receives the GMS C2DM registration response.
-    private class RegistrationHandler: Handler {
-        let continuation: kotlin.coroutines.Continuation<String>
-
-        init(continuation: kotlin.coroutines.Continuation<String>) {
-            super.init(Looper.getMainLooper())
-            self.continuation = continuation
-        }
-
-        override func handleMessage(_ msg: Message) {
-            let data = msg.data
-            let registrationId = data?.getString("registration_id")
-            let error = data?.getString("error")
-
-            if let token = registrationId, !token.isEmpty {
-                logger.info("Received GMS registration token (\(token.count) chars)")
-                continuation.resume(token)
-            } else if let errorMsg = error {
-                logger.error("GMS registration failed: \(errorMsg)")
-                continuation.resumeWithException(SkipNotifyError(message: "GMS registration failed: \(errorMsg)") as Throwable)
-            } else {
-                logger.error("GMS registration returned empty response")
-                continuation.resumeWithException(SkipNotifyError(message: "GMS registration returned empty response") as Throwable)
-            }
-        }
+        */
+        return "" // placeholder for Swift compilation; replaced by SKIP REPLACE above
     }
     #endif
 }

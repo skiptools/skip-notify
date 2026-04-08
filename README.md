@@ -1,8 +1,7 @@
 # SkipNotify
 
 A [Skip](https://skip.dev) framework for cross-platform push notifications
-on iOS and Android **without** depending on any proprietary Firebase or
-Google Play Services libraries.
+on iOS and Android.
 
 - **iOS**: Uses the native `UserNotifications` framework and APNs.
 - **Android**: Communicates directly with Google Mobile Services (GMS) via
@@ -118,18 +117,6 @@ The registration flow:
    `REGISTRATION` broadcast with a `registration_id` extra containing
    the FCM token, or an `error` extra if registration failed
 
-This approach:
-
-- **No proprietary dependencies** — does not require `firebase-messaging`,
-  `play-services-base`, or any other closed-source Google library
-- **No `google-services.json`** — the sender ID is passed at runtime,
-  not read from a configuration file
-- **Compatible with microG** — uses the same open protocol that
-  microG reimplements for de-Googled devices
-- **Produces standard FCM tokens** — the token is identical to what
-  `FirebaseMessaging.getInstance().token` would return and can be
-  used with the FCM HTTP v1 API to send push notifications
-
 ### Sending a Push Notification
 
 Once you have the FCM token from `fetchNotificationToken`, send
@@ -172,7 +159,7 @@ documentation:
 No additional Gradle dependencies or `google-services.json` file is required.
 GMS (Google Play Services) must be installed on the device.
 
-To **receive** push messages (not just register for tokens), your app
+To _receive_ push messages (not just register for tokens), your app
 needs a `BroadcastReceiver` for the `com.google.android.c2dm.intent.RECEIVE`
 action in `AndroidManifest.xml`:
 

@@ -1,24 +1,21 @@
 # SkipNotify
 
 A [Skip](https://skip.dev) framework for cross-platform push notifications
-on iOS and Android **without** depending on the `com.google.firebase:firebase-messaging` library.
+on iOS and Android **without** depending on any proprietary Firebase or
+Google Play Services libraries.
 
 - **iOS**: Uses the native `UserNotifications` framework and APNs.
-- **Android**: Interfaces directly with Google Mobile Services (GMS) via the
-  C2DM registration intent to obtain FCM tokens, requiring only that GMS
-  (Google Play Services) is present on the device.
+- **Android**: Communicates directly with Google Mobile Services (GMS) via
+  the C2DM registration intent protocol to obtain FCM tokens, requiring
+  only that GMS (Google Play Services) is installed on the device.
 
 ## Setup
 
-To include this framework in your project, add the following
-dependency to your `Package.swift` file:
+Add the dependency to your `Package.swift` file:
 
 ```swift
 let package = Package(
     name: "my-package",
-    products: [
-        .library(name: "MyProduct", targets: ["MyTarget"]),
-    ],
     dependencies: [
         .package(url: "https://source.skip.dev/skip-notify.git", "0.0.0"..<"2.0.0"),
     ],
@@ -38,25 +35,37 @@ let package = Package(
 import SkipNotify
 
 do {
-    let token = try await SkipNotify.shared.fetchNotificationToken()
+    // On Android, pass your Firebase project's numeric sender ID.
+    // On iOS, the parameter is ignored (APNs uses bundle ID + entitlements).
+    let token = try await SkipNotify.shared.fetchNotificationToken(
+        firebaseProjectNumber: "123456789"
+    )
     print("Push token: \(token)")
+    // Send this token to your backend server to target this device
 } catch {
     print("Failed to get push token: \(error)")
 }
 ```
 
-On iOS, this registers with APNs and returns the device token as a hex string.
-On Android, this sends a C2DM registration intent to GMS and returns
-the FCM registration token.
+**Finding your Firebase project number:**
+Open the [Firebase console](https://console.firebase.google.com/),
+select your project, go to **Project settings** > **Cloud Messaging**,
+and copy the **Sender ID** (a numeric string like `"123456789012"`).
+
+On iOS, the returned token is the APNs device token as a hex string.
+On Android, the returned token is an FCM registration token — the same
+token that `FirebaseMessaging.getInstance().token` would produce.
 
 ### Checking GMS Availability
 
 Before requesting a token on Android, you can check whether Google Mobile
-Services is available on the device:
+Services is available:
 
 ```swift
 if SkipNotify.shared.isGMSAvailable {
-    let token = try await SkipNotify.shared.fetchNotificationToken()
+    let token = try await SkipNotify.shared.fetchNotificationToken(
+        firebaseProjectNumber: "123456789"
+    )
 } else {
     print("GMS not available: \(SkipNotify.shared.gmsStatusDescription)")
 }
@@ -67,42 +76,85 @@ if SkipNotify.shared.isGMSAvailable {
 | `isGMSAvailable` | `false` | `true` | `false` |
 | `gmsStatusDescription` | `"GMS not applicable (iOS)"` | `"GMS available"` | `"GMS not available"` |
 
-### Sender ID
-
-If your Firebase project requires a specific sender ID (GCM project number),
-pass it when fetching the token:
-
-```swift
-let token = try await SkipNotify.shared.fetchNotificationToken(senderID: "123456789")
-```
-
 ## How It Works
 
 ### iOS
 
-Standard APNs flow using `UIApplication.shared.registerForRemoteNotifications()`.
-The token is received via `NotificationCenter` observers for
-`didRegisterForRemoteNotificationsWithDeviceToken` and
-`didFailToRegisterForRemoteNotificationsWithError`.
+Standard APNs registration flow:
+
+1. Calls `UIApplication.shared.registerForRemoteNotifications()`
+2. Receives the device token via the `didRegisterForRemoteNotificationsWithDeviceToken`
+   app delegate callback (bridged through `NotificationCenter`)
+3. Returns the token as a hex-encoded string
+
+Your app delegate must forward the token and error callbacks to
+`NotificationCenter`. Skip projects created with `skip init` or
+`skip create` include this automatically. For custom setups, add
+the forwarding calls documented in the source.
 
 ### Android
 
-Instead of depending on `com.google.firebase:firebase-messaging`,
-SkipNotify interfaces directly with Google Mobile Services via the
-`com.google.android.c2dm.intent.REGISTER` intent:
+SkipNotify communicates directly with Google Mobile Services using
+the **C2DM registration intent protocol** — the same underlying
+mechanism that the `firebase-messaging` SDK uses internally. This
+protocol predates the closed-source library abstraction and remains
+stable because millions of devices depend on it.
 
-1. Checks GMS availability by resolving the C2DM registration service
-2. Sends a registration `Intent` to `com.google.android.gms` with a
-   `Messenger` callback
-3. GMS responds asynchronously with a `Message` containing the
-   `registration_id` (FCM token)
+The registration flow:
+
+1. **Availability check**: Verifies `com.google.android.gms` is
+   installed and enabled on the device
+2. **Register a BroadcastReceiver**: Listens for the
+   `com.google.android.c2dm.intent.REGISTRATION` response broadcast
+3. **Send the registration intent**: Sends
+   `com.google.android.c2dm.intent.REGISTER` to GMS with:
+   - `app`: A `PendingIntent` that GMS uses to verify the calling
+     app's package identity
+   - `sender`: The Firebase project number (sender ID)
+   - `subtype`: Same as sender (signals standard app-level registration)
+   - `gmsVersion`: The installed GMS version code
+   - `scope`: `"GCM"` (the registration scope)
+4. **Receive the token**: GMS responds asynchronously via the
+   `REGISTRATION` broadcast with a `registration_id` extra containing
+   the FCM token, or an `error` extra if registration failed
 
 This approach:
-- Eliminates the `firebase-messaging` transitive dependency tree
-- Works on any device with Google Play Services installed
-- Produces the same FCM token that `FirebaseMessaging.getInstance().token` would return
-- Does **not** require Firebase configuration files (`google-services.json`)
-  for token retrieval alone
+
+- **No proprietary dependencies** — does not require `firebase-messaging`,
+  `play-services-base`, or any other closed-source Google library
+- **No `google-services.json`** — the sender ID is passed at runtime,
+  not read from a configuration file
+- **Compatible with microG** — uses the same open protocol that
+  microG reimplements for de-Googled devices
+- **Produces standard FCM tokens** — the token is identical to what
+  `FirebaseMessaging.getInstance().token` would return and can be
+  used with the FCM HTTP v1 API to send push notifications
+
+### Sending a Push Notification
+
+Once you have the FCM token from `fetchNotificationToken`, send
+messages from your server using the
+[FCM HTTP v1 API](https://firebase.google.com/docs/cloud-messaging/send-message):
+
+```
+POST https://fcm.googleapis.com/v1/projects/YOUR_PROJECT_ID/messages:send
+Authorization: Bearer <OAuth2-token>
+Content-Type: application/json
+
+{
+  "message": {
+    "token": "<the-token-from-fetchNotificationToken>",
+    "notification": {
+      "title": "Hello",
+      "body": "World"
+    }
+  }
+}
+```
+
+For iOS, use the
+[APNs HTTP/2 API](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns)
+with the hex device token returned by `fetchNotificationToken`.
 
 ## Configuration
 
@@ -117,11 +169,12 @@ documentation:
 
 ### Android
 
-No additional Gradle dependencies or `google-services.json` file is required
-for token retrieval. GMS (Google Play Services) must be present on the device.
+No additional Gradle dependencies or `google-services.json` file is required.
+GMS (Google Play Services) must be installed on the device.
 
-To receive push messages, your app will need to register a `BroadcastReceiver`
-for the `com.google.android.c2dm.intent.RECEIVE` action in `AndroidManifest.xml`:
+To **receive** push messages (not just register for tokens), your app
+needs a `BroadcastReceiver` for the `com.google.android.c2dm.intent.RECEIVE`
+action in `AndroidManifest.xml`:
 
 ```xml
 <receiver android:name=".PushMessageReceiver"
@@ -133,7 +186,42 @@ for the `com.google.android.c2dm.intent.RECEIVE` action in `AndroidManifest.xml`
 </receiver>
 ```
 
+The `android:permission` attribute is critical — it restricts delivery
+to broadcasts sent by GMS (which holds the
+`com.google.android.c2dm.permission.SEND` permission), preventing
+other apps from injecting fake push messages.
+
+Message payloads arrive as intent extras:
+
+| Extra key | Description |
+|---|---|
+| `gcm.notification.title` | Notification title |
+| `gcm.notification.body` | Notification body |
+| `google.message_id` | Unique message ID |
+| `collapse_key` | Collapse key (if set) |
+| *(your custom keys)* | Data payload fields |
+
+## Token Refresh
+
+GMS may invalidate registration tokens after Play Services updates or
+device resets. Re-register at app startup and compare the returned token
+against the one stored on your server. If it differs, update the server.
+
+You can also listen for the `com.google.android.c2dm.intent.REGISTRATION`
+broadcast in your manifest to detect token refreshes:
+
+```xml
+<receiver android:name=".TokenRefreshReceiver"
+    android:exported="true">
+    <intent-filter>
+        <action android:name="com.google.android.c2dm.intent.REGISTRATION" />
+    </intent-filter>
+</receiver>
+```
+
+The new token arrives in the `registration_id` extra of the broadcast intent.
+
 ## License
 
-This software is licensed under the 
+This software is licensed under the
 [Mozilla Public License 2.0](https://www.mozilla.org/MPL/).

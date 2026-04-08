@@ -29,7 +29,7 @@ private let logger: Logger = Logger(subsystem: "skip.notify", category: "SkipNot
 /// requiring any proprietary Firebase or Google Play Services libraries.
 ///
 /// ```swift
-/// let token = try await SkipNotify.shared.fetchNotificationToken(senderID: "123456789")
+/// let token = try await SkipNotify.shared.fetchNotificationToken(firebaseProjectNumber: "123456789")
 /// ```
 public class SkipNotify {
     public static let shared = SkipNotify()
@@ -65,10 +65,13 @@ public class SkipNotify {
     /// Fetches the device's push notification token.
     ///
     /// On iOS, registers with APNs and returns the device token as a hex string.
-    /// On Android, requests an FCM registration token from GMS using the C2DM registration intent protocol.
+    /// On Android, requests an FCM registration token from GMS using the
+    /// C2DM registration intent protocol.
     ///
-    /// - Parameter senderID: The GCM/FCM sender ID (numeric project number)
-    ///   from your Firebase console. Required on Android; ignored on iOS.
+    /// - Parameter firebaseProjectNumber: The numeric sender ID (project number)
+    ///   from the Firebase console's Cloud Messaging settings. Required on Android
+    ///   to identify which Firebase project should receive messages for this app.
+    ///   Ignored on iOS (APNs uses the app's bundle ID and entitlements instead).
     /// - Returns: The push notification token string.
     /// - Throws: `SkipNotifyError` if token retrieval fails or GMS is unavailable.
     public func fetchNotificationToken(firebaseProjectNumber: String?) async throws -> String {
@@ -79,7 +82,7 @@ public class SkipNotify {
         guard let firebaseProjectNumber else {
             throw SkipNotifyError(message: "Firebase Sender ID unspecified")
         }
-        return try await Self.requestToken(senderID: senderID)
+        return try await Self.requestToken(senderID: firebaseProjectNumber)
         #else
         #if !canImport(UIKit) // UNUserNotificationCenter does not exist on macOS
         throw SkipNotifyError(message: "UIKit required for notifications on Darwin platforms")

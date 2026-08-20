@@ -32,7 +32,7 @@ private let logger: Logger = Logger(subsystem: "skip.notify", category: "SkipNot
 /// let token = try await SkipNotify.shared.fetchNotificationToken(firebaseProjectNumber: "123456789")
 /// ```
 public class SkipNotify {
-    public static let shared = SkipNotify()
+    nonisolated(unsafe) public static let shared = SkipNotify()
 
     private init() {
     }

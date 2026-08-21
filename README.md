@@ -142,9 +142,7 @@ For iOS, use the
 with the hex device token returned by `fetchNotificationToken`.
 
 > [!TIP]
-> For cross-platform notification sending, you may want to
-> utilize a tool like [gorush](https://github.com/appleboy/gorush)
-> to simplify the configuration and authentication.
+> For cross-platform notification sending, you may want to utilize a tool like [gorush](https://github.com/appleboy/gorush) to simplify the configuration and authentication.
 
 ## Configuration
 
@@ -176,10 +174,9 @@ action in `AndroidManifest.xml`:
 </receiver>
 ```
 
-The `android:permission` attribute is critical — it restricts delivery
+The `android:permission` attribute is needed to restrict delivery
 to broadcasts sent by GMS (which holds the
-`com.google.android.c2dm.permission.SEND` permission), preventing
-other apps from injecting fake push messages.
+`com.google.android.c2dm.permission.SEND` permission).
 
 Message payloads arrive as intent extras:
 

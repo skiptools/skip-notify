@@ -16,7 +16,7 @@ Add the dependency to your `Package.swift` file:
 let package = Package(
     name: "my-package",
     dependencies: [
-        .package(url: "https://source.skip.dev/skip-notify.git", "0.0.0"..<"2.0.0"),
+        .package(url: "https://github.com/skiptools/skip-notify.git", "0.0.0"..<"2.0.0"),
     ],
     targets: [
         .target(name: "MyTarget", dependencies: [
